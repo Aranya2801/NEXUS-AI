@@ -1,0 +1,85 @@
+# NEXUS AI — full stack. `cp .env.example .env`, set NEXUS_JWT_SECRET, then `docker compose up --build`.
+# UI: http://localhost:8080   API docs are disabled in prod mode.
+x-api-env: &api-env
+  NEXUS_ENV: prod
+  NEXUS_JWT_SECRET: ${NEXUS_JWT_SECRET:?set NEXUS_JWT_SECRET in .env (>= 32 random characters)}
+  NEXUS_DATABASE_URL: postgresql+asyncpg://nexus:${POSTGRES_PASSWORD:-nexus}@postgres:5432/nexus
+  NEXUS_REDIS_URL: redis://redis:6379/0
+  NEXUS_CHECKPOINT_BACKEND: postgres            # paused (human-review) runs survive restarts and work across replicas
+  NEXUS_STORAGE_BACKEND: s3
+  NEXUS_S3_ENDPOINT: http://minio:9000
+  NEXUS_S3_BUCKET: nexus-documents
+  NEXUS_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-nexus-minio}
+  NEXUS_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-nexus-minio-secret}
+  NEXUS_INGESTION_MODE: external                # the API only enqueues; the `worker` service ingests
+  NEXUS_LLM_PROVIDER: ${NEXUS_LLM_PROVIDER:-mock}
+  NEXUS_LLM_MODEL: ${NEXUS_LLM_MODEL:-mock-llm}
+  NEXUS_LLM_API_KEY: ${NEXUS_LLM_API_KEY:-}
+  NEXUS_EMBEDDING_PROVIDER: ${NEXUS_EMBEDDING_PROVIDER:-mock}
+  NEXUS_EMBEDDING_MODEL: ${NEXUS_EMBEDDING_MODEL:-hashing-v1}
+  NEXUS_EMBEDDING_DIM: ${NEXUS_EMBEDDING_DIM:-384}
+  NEXUS_EMBEDDING_API_KEY: ${NEXUS_EMBEDDING_API_KEY:-}
+  NEXUS_OTEL_ENABLED: ${NEXUS_OTEL_ENABLED:-false}
+  NEXUS_OTEL_ENDPOINT: ${NEXUS_OTEL_ENDPOINT:-}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+      POSTGRES_DB: nexus
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]   # rate-limit counters only; nothing here needs persistence
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 20 }
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nexus-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-nexus-minio-secret}
+    volumes: [miniodata:/data]
+    healthcheck: { test: ["CMD", "mc", "ready", "local"], interval: 5s, timeout: 3s, retries: 20 }
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    environment:
+      <<: *api-env
+      NEXUS_RUN_MIGRATIONS: "true"               # only this service migrates
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment: *api-env
+    depends_on:
+      api: { condition: service_healthy }        # schema is migrated by the time the API is healthy
+    restart: unless-stopped
+    deploy: { replicas: 2 }                       # safe: jobs are claimed with an atomic compare-and-set
+
+  frontend:
+    build: ./frontend
+    ports: ["8080:80"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
