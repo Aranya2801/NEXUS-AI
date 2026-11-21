@@ -1,0 +1,100 @@
+# Manual, environment-gated deploy of an already-released version (images built and signed by release.yml) to EKS.
+# Configure per GitHub Environment (staging, production; add required reviewers on production):
+#   vars: AWS_REGION, AWS_DEPLOY_ROLE_ARN (OIDC role from deploy/terraform), EKS_CLUSTER, REGISTRY (e.g. ghcr.io/<owner>/<repo>), PUBLIC_URL (https://nexus.example.com)
+# No long-lived cloud credentials are stored in GitHub.
+name: Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+      version:
+        description: Released version without the leading v (e.g. 0.1.0)
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      DEPLOY_ENV: ${{ inputs.environment }}
+      REGISTRY: ${{ vars.REGISTRY }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "bad version" >&2; exit 1; }
+          [[ "$REGISTRY" =~ ^[a-z0-9./_-]+$ ]] || { echo "bad REGISTRY variable" >&2; exit 1; }
+      - uses: actions/checkout@v4
+        with: { ref: "v${{ inputs.version }}", persist-credentials: false }      # deploy the manifests that were released with that version
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Connect to the cluster
+        env: { CLUSTER: "${{ vars.EKS_CLUSTER }}", REGION: "${{ vars.AWS_REGION }}" }
+        run: aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
+      - uses: sigstore/cosign-installer@v3
+      - name: Verify the images were signed by this repository's release workflow
+        env: { SERVER_REPO: "${{ github.repository }}" }
+        run: |
+          set -euo pipefail
+          for img in api frontend; do
+            cosign verify "${REGISTRY}/${img}:${VERSION}" \
+              --certificate-identity-regexp "^https://github.com/${SERVER_REPO}/\.github/workflows/release\.yml@refs/tags/v" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          done
+      - name: Render wrapper overlays that pin the requested version
+        run: |
+          set -euo pipefail
+          test -d "deploy/k8s/overlays/${DEPLOY_ENV}" || { echo "missing deploy/k8s/overlays/${DEPLOY_ENV} (copy deploy/k8s/overlays/example)" >&2; exit 1; }
+          mkdir -p deploy/k8s/overlays/_ci_app deploy/k8s/overlays/_ci_migrate
+          printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' "resources: [../${DEPLOY_ENV}]" 'images:' \
+            "  - {name: registry.example.com/nexus/api, newName: ${REGISTRY}/api, newTag: \"${VERSION}\"}" \
+            "  - {name: registry.example.com/nexus/frontend, newName: ${REGISTRY}/frontend, newTag: \"${VERSION}\"}" > deploy/k8s/overlays/_ci_app/kustomization.yaml
+          printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources: [../../migrate]' 'images:' \
+            "  - {name: registry.example.com/nexus/api, newName: ${REGISTRY}/api, newTag: \"${VERSION}\"}" > deploy/k8s/overlays/_ci_migrate/kustomization.yaml
+          kubectl kustomize deploy/k8s/overlays/_ci_app | grep -c "image: ${REGISTRY}/" | grep -qx 3     # api, worker, frontend all re-pointed
+      - name: Record the running revision (for rollback)
+        run: |
+          kubectl -n nexus get deploy api worker frontend -o wide || true
+          kubectl -n nexus rollout history deploy/api | tail -n 5 || true
+      - name: Run database migrations (expand-only; see docs/releases.md)
+        run: |
+          set -euo pipefail
+          kubectl -n nexus delete job nexus-migrate --ignore-not-found
+          kubectl apply -k deploy/k8s/overlays/_ci_migrate
+          kubectl -n nexus wait --for=condition=complete job/nexus-migrate --timeout=600s || { kubectl -n nexus logs job/nexus-migrate --tail=100; exit 1; }
+      - name: Roll out
+        run: |
+          set -euo pipefail
+          kubectl apply -k deploy/k8s/overlays/_ci_app
+          for d in api worker frontend; do kubectl -n nexus rollout status "deploy/$d" --timeout=600s; done
+      - name: Smoke test
+        env: { URL: "${{ vars.PUBLIC_URL }}" }
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            got="$(curl -fsS "${URL}/api/health/version" | jq -r .version || true)"
+            [ "$got" = "$VERSION" ] && curl -fsS "${URL}/api/health/ready" > /dev/null && exit 0
+            sleep 10
+          done
+          echo "smoke test failed (last version seen: ${got:-none})" >&2; exit 1
+      - name: Roll back the workloads if the deploy failed
+        if: failure()
+        run: |
+          # Workloads only. The expand-only migration policy is what makes this safe: the previous version runs against the migrated schema.
+          for d in api worker frontend; do kubectl -n nexus rollout undo "deploy/$d" || true; done

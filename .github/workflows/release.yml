@@ -1,0 +1,90 @@
+# Tag-driven release: `git tag vX.Y.Z && git push origin vX.Y.Z` (after `release.py bump X.Y.Z` is merged).
+# Builds and pushes the API and frontend images to GHCR, scans them, attaches provenance + SBOM, signs by digest (cosign keyless), then creates the GitHub Release from CHANGELOG.md.
+name: Release
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip, cache-dependency-path: backend/requirements-dev.txt }
+      - run: pip install -r backend/requirements-dev.txt
+      - name: Tag must equal the code version
+        env: { TAG: "${{ github.ref_name }}" }
+        run: python infrastructure/scripts/release.py tag-matches "$TAG"
+      - run: python infrastructure/scripts/release.py check
+      - run: python -m pytest -q -p no:logging
+        working-directory: backend
+  images:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { image: api, context: backend, dockerfile: backend/Dockerfile }
+          - { image: frontend, context: frontend, dockerfile: frontend/Dockerfile.unprivileged }
+    permissions:
+      contents: read
+      packages: write
+      id-token: write          # keyless signing
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Log in to GHCR
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", ACTOR: "${{ github.actor }}" }
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Build and push (provenance + SBOM attached)
+        id: build
+        env:
+          REPO: "${{ github.repository }}"
+          TAG: "${{ github.ref_name }}"
+          IMAGE: "${{ matrix.image }}"
+          CONTEXT: "${{ matrix.context }}"
+          DOCKERFILE: "${{ matrix.dockerfile }}"
+        run: |
+          set -euo pipefail
+          name="ghcr.io/${REPO,,}/${IMAGE}"
+          docker buildx build "$CONTEXT" -f "$DOCKERFILE" --push --provenance=mode=max --sbom=true \
+            -t "${name}:${TAG#v}" --metadata-file meta.json
+          digest="$(jq -r '."containerimage.digest"' meta.json)"
+          test -n "$digest" && test "$digest" != null
+          echo "ref=${name}@${digest}" >> "$GITHUB_OUTPUT"
+      - name: Scan (fails on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.build.outputs.ref }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign by digest
+        env: { REF: "${{ steps.build.outputs.ref }}" }
+        run: cosign sign --yes "$REF"
+  github-release:
+    needs: [images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Create the GitHub Release from CHANGELOG.md
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", TAG: "${{ github.ref_name }}", REPO: "${{ github.repository }}" }
+        run: |
+          set -euo pipefail
+          python3 infrastructure/scripts/release.py notes "${TAG#v}" > notes.md
+          flags=""; case "$TAG" in *-*) flags="--prerelease";; esac
+          gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes-file notes.md --verify-tag $flags

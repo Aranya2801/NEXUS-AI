@@ -1,0 +1,74 @@
+# Infrastructure as code for AWS (deploy/terraform). PRs get fmt + validate (no cloud access). plan/apply are manual, environment-gated, OIDC-authenticated.
+name: Terraform
+on:
+  pull_request:
+    paths: ["deploy/terraform/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+      apply:
+        description: Apply the plan (otherwise plan only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: terraform-${{ github.event_name == 'pull_request' && github.ref || inputs.environment }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip, cache-dependency-path: backend/requirements-dev.txt }
+      - run: pip install -r backend/requirements-dev.txt
+      - run: python infrastructure/scripts/validate_terraform.py           # repository policy checks (no provider access needed)
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8" }
+      - run: terraform fmt -check -recursive
+        working-directory: deploy/terraform
+      - run: terraform init -backend=false -input=false
+        working-directory: deploy/terraform
+      - run: terraform validate
+        working-directory: deploy/terraform
+  plan-apply:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: "true"
+      DEPLOY_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8" }
+      - name: Init with the remote state for this environment
+        working-directory: deploy/terraform
+        env: { STATE_BUCKET: "${{ vars.TF_STATE_BUCKET }}", STATE_LOCK_TABLE: "${{ vars.TF_STATE_LOCK_TABLE }}", REGION: "${{ vars.AWS_REGION }}" }
+        run: |
+          terraform init -input=false -backend-config="bucket=${STATE_BUCKET}" -backend-config="key=nexus/${DEPLOY_ENV}.tfstate" \
+            -backend-config="region=${REGION}" -backend-config="dynamodb_table=${STATE_LOCK_TABLE}" -backend-config="encrypt=true"
+      - name: Plan
+        working-directory: deploy/terraform
+        run: terraform plan -input=false -var-file="environments/${DEPLOY_ENV}.tfvars" -out=tfplan
+      - name: Apply the reviewed plan
+        if: ${{ inputs.apply }}
+        working-directory: deploy/terraform
+        run: terraform apply -input=false tfplan
