@@ -1,0 +1,12 @@
+environment             = "staging"
+region                  = "us-east-1"
+github_repository       = "CHANGE-ME/nexus-ai"
+eks_public_access_cidrs = ["203.0.113.0/24"] # CHANGE-ME: your office/VPN range (documentation range placeholder)
+az_count                = 2
+node_instance_types     = ["m6i.large"]
+node_min_size           = 2
+node_max_size           = 4
+db_instance_class       = "db.t4g.large"
+db_multi_az             = false
+db_deletion_protection  = false
+enable_dr               = false
