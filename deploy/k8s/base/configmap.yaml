@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexus-config
+data:
+  NEXUS_ENV: "prod"
+  NEXUS_CHECKPOINT_BACKEND: "postgres"       # paused human-review runs survive restarts and work across replicas
+  NEXUS_STORAGE_BACKEND: "s3"
+  NEXUS_S3_BUCKET: "nexus-documents"
+  NEXUS_INGESTION_MODE: "external"           # API pods only enqueue; the worker Deployment ingests
+  NEXUS_RUN_MIGRATIONS: "false"              # migrations run as a separate Job (deploy/k8s/migrate)
+  NEXUS_LLM_PROVIDER: "mock"
+  NEXUS_LLM_MODEL: "mock-llm"
+  NEXUS_EMBEDDING_PROVIDER: "mock"
+  NEXUS_EMBEDDING_MODEL: "hashing-v1"
+  NEXUS_EMBEDDING_DIM: "384"
+  NEXUS_LOG_JSON: "true"
+  NEXUS_METRICS_ENABLED: "true"

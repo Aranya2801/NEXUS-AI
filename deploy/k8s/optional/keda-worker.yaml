@@ -1,0 +1,17 @@
+# OPTIONAL and UNTESTED: scales workers on ingestion queue depth instead of CPU. Requires KEDA and a Prometheus scraping the API's
+# /admin/metrics (an admin-token scrape job). If you use this, delete the `worker` HorizontalPodAutoscaler from the base (KEDA manages its own).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+spec:
+  scaleTargetRef: {name: worker}
+  minReplicaCount: 1
+  maxReplicaCount: 8
+  cooldownPeriod: 600
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc:9090
+        query: max(nexus_ingestion_queue_depth{status="queued"})
+        threshold: "20"

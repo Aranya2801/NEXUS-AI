@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels: {app.kubernetes.io/name: worker, app.kubernetes.io/component: worker}
+spec:
+  replicas: 2                                           # safe at any count: jobs are claimed with an atomic compare-and-set
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 1}
+  selector:
+    matchLabels: {app.kubernetes.io/name: worker}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: worker, app.kubernetes.io/component: worker}
+    spec:
+      serviceAccountName: nexus
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120                # SIGTERM stops polling; an in-flight job gets time to finish, otherwise recover_stuck re-queues it
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: worker}
+      containers:
+        - name: worker
+          image: registry.example.com/nexus/api:0.1.0   # same image as the API
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef: {name: nexus-config}
+            - secretRef: {name: nexus-secrets}
+          livenessProbe:                                # the worker writes a heartbeat file from its event loop every 15 s
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/nexus-worker-heartbeat') < 90 else 1)"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}          # parsing, OCR and embedding are CPU/memory heavy
+            limits: {cpu: "2", memory: 2Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: data, mountPath: /data}
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 1Gi}}
+        - {name: data, emptyDir: {sizeLimit: 256Mi}}

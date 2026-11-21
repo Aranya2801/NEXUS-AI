@@ -1,0 +1,18 @@
+# Copy this directory per environment (staging/prod). It shows the usual knobs: image registry + tag, host, replica floor.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: registry.example.com/nexus/api
+    newName: registry.example.com/nexus/api
+    newTag: "0.1.0"
+  - name: registry.example.com/nexus/frontend
+    newName: registry.example.com/nexus/frontend
+    newTag: "0.1.0"
+patches:
+  - target: {kind: Ingress, name: nexus}
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: nexus.example.com
