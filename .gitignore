@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.sqlite
+nexus.db
+data/
+node_modules/
+dist/
+.pytest_cache/
+experiments/results/*.tmp
+deploy/k8s/overlays/_ci_*/
