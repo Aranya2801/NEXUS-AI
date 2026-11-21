@@ -1,0 +1,10 @@
+-r requirements.txt
+-r requirements-otel.txt   # tracing tests exercise the real OpenTelemetry path
+# real PostgreSQL + pgvector for integration/migration tests (the maintained fork exposes the `pixeltable_pgserver` module)
+pixeltable-pgserver==0.7.2
+python-hcl2==8.2.0           # static Terraform policy checks (infrastructure/scripts/validate_terraform.py)
+PyYAML==6.0.4                # workflow / Kubernetes validators
+# S3-compatible server for storage tests
+moto[server]==5.2.5
+Flask==3.1.3
+Werkzeug==3.1.9
