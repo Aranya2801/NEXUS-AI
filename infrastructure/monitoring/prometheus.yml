@@ -1,0 +1,10 @@
+# Example Prometheus scrape config. /admin/metrics requires an admin bearer token (create a dedicated admin user for scraping;
+# tokens expire after NEXUS_ACCESS_TOKEN_MINUTES, so refresh it with your secret manager or run Prometheus behind an authenticating proxy).
+scrape_configs:
+  - job_name: nexus-api
+    metrics_path: /admin/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/nexus.token
+    static_configs:
+      - targets: ["api:8000"]
