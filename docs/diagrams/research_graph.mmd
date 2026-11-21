@@ -1,0 +1,45 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	classify(classify)
+	research(research)
+	rewrite(rewrite)
+	retrieve_branch(retrieve_branch)
+	graph_branch(graph_branch)
+	fuse_rerank(fuse_rerank)
+	evaluate_evidence(evaluate_evidence)
+	analyze(analyze)
+	generate(generate)
+	verify_facts(verify_facts)
+	validate_citations(validate_citations)
+	quality(quality)
+	human_review(human_review)
+	finalize(finalize)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> classify;
+	analyze --> generate;
+	classify --> research;
+	evaluate_evidence -.-> analyze;
+	evaluate_evidence -.-> rewrite;
+	fuse_rerank --> evaluate_evidence;
+	generate --> verify_facts;
+	graph_branch --> fuse_rerank;
+	human_review --> finalize;
+	quality -.-> finalize;
+	quality -.-> human_review;
+	quality -.-> rewrite;
+	research -.-> graph_branch;
+	research -.-> retrieve_branch;
+	retrieve_branch --> fuse_rerank;
+	rewrite -.-> graph_branch;
+	rewrite -.-> retrieve_branch;
+	validate_citations --> quality;
+	verify_facts --> validate_citations;
+	finalize --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
