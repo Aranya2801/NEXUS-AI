@@ -24,13 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.13", cache: pip, cache-dependency-path: backend/requirements-dev.txt }
       - run: pip install -r backend/requirements-dev.txt
       - run: python infrastructure/scripts/validate_terraform.py           # repository policy checks (no provider access needed)
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with: { terraform_version: "1.9.8" }
       - run: terraform fmt -check -recursive
         working-directory: deploy/terraform
@@ -51,13 +51,13 @@ jobs:
       TF_IN_AUTOMATION: "true"
       DEPLOY_ENV: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with: { terraform_version: "1.9.8" }
       - name: Init with the remote state for this environment
         working-directory: deploy/terraform
