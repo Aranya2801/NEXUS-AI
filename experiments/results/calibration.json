@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-11-21T04:40:44.898111+00:00",
+  "gate": "abstain_confidence_threshold",
+  "chosen_threshold": 0.4669,
+  "optimal_set_size": 1,
+  "dev": {
+    "n_answerable": 26,
+    "n_unanswerable": 3,
+    "answerable_kept": 1.0,
+    "unanswerable_abstained": 1.0,
+    "balanced_accuracy": 1.0
+  },
+  "test": {
+    "n_answerable": 62,
+    "n_unanswerable": 9,
+    "answerable_kept": 1.0,
+    "unanswerable_abstained": 1.0,
+    "balanced_accuracy": 1.0
+  },
+  "test_without_gate": {
+    "answerable_kept": 1.0,
+    "unanswerable_abstained": 0.0,
+    "balanced_accuracy": 0.5
+  },
+  "auroc_dev": 1.0,
+  "auroc_test": 1.0,
+  "environment": {
+    "llm": "mock-llm",
+    "embedder": "hashing-v1:128",
+    "mock": true,
+    "reranker": "lexical",
+    "python": "3.13.18",
+    "git_commit": null,
+    "repeats": 1,
+    "seed": 7,
+    "split": "test",
+    "human_review_mode": "never",
+    "abstain_confidence_threshold": 0.0,
+    "evidence_sufficiency_threshold": 0.35,
+    "max_retrieval_loops": 2
+  },
+  "caveat": "Calibrated on mock components over a synthetic corpus; recalibrate for any other embedder/reranker/LLM. The unanswerable set is small, so the test-split estimate has wide uncertainty."
+}
