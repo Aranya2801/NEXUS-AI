@@ -4,7 +4,7 @@ asyncpg==0.32.0
 bcrypt==5.0.0
 beautifulsoup4==4.15.0
 boto3==1.44.9
-botocore==1.44.9
+botocore==1.44.11
 cryptography==50.0.2
 email-validator==2.4.0
 fastapi==0.165.0
