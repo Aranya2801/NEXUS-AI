@@ -38,6 +38,6 @@ python-jose==3.5.0
 python-multipart==0.0.34
 python-pptx==1.0.2
 redis==8.1.0
-reportlab==5.1.0
+reportlab==5.1.1
 SQLAlchemy==2.1.9
 uvicorn==0.54.0
